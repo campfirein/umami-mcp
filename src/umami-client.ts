@@ -1,7 +1,9 @@
 // A tiny read-only HTTP client for the Umami API. It knows how to authenticate
-// in both modes and exposes a single `get()` — this server issues NO writes, so
-// there is deliberately no post/put/delete surface here. The one non-GET call
-// is the self-hosted login, which is an auth handshake, not a data mutation.
+// in both modes and exposes `get()` plus a narrow `post()`. This server never
+// MUTATES data: the only POSTs it issues are the self-hosted login handshake and
+// Umami's compute-report endpoints (funnel/retention/journey), which are POSTs
+// purely because their inputs are complex — they read analytics, they don't
+// write. There is deliberately no put/delete surface.
 
 import type { UmamiConfig } from "./config.js";
 
@@ -58,6 +60,21 @@ export class UmamiClient {
 		const res = await fetch(url, {
 			headers: { accept: "application/json", ...(await this.#authHeaders()) },
 		});
+		return this.#parse(res, path);
+	}
+
+	/** Issue a POST (compute-report reads only) and return the parsed JSON body. */
+	async post(path: string, body: unknown): Promise<unknown> {
+		const res = await fetch(`${this.#config.base}${path}`, {
+			method: "POST",
+			headers: { "content-type": "application/json", accept: "application/json", ...(await this.#authHeaders()) },
+			body: JSON.stringify(body),
+		});
+		return this.#parse(res, path);
+	}
+
+	/** Shared response handling: throw a legible error on non-2xx, else parse JSON. */
+	async #parse(res: Response, path: string): Promise<unknown> {
 		const text = await res.text();
 		if (!res.ok) {
 			throw new Error(`Umami API ${res.status} for ${path}: ${text.slice(0, 300)}`);

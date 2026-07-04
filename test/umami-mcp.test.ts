@@ -7,19 +7,31 @@ import { loadConfig } from "../src/config.js";
 import { TOOLS } from "../src/tools.js";
 import type { Query, UmamiClient } from "../src/umami-client.js";
 
-/** A UmamiClient stand-in that records the last GET and returns a canned body. */
-function fakeClient(): UmamiClient & { last: { path: string; query?: Query } | undefined } {
-	const state: { last: { path: string; query?: Query } | undefined } = { last: undefined };
+interface Recorded {
+	method: "GET" | "POST";
+	path: string;
+	query?: Query;
+	body?: unknown;
+}
+
+/** A UmamiClient stand-in that records every call and returns a canned body. */
+function fakeClient(): UmamiClient & { calls: Recorded[]; last: Recorded | undefined } {
+	const calls: Recorded[] = [];
 	const client = {
-		last: state.last,
+		calls,
+		get last(): Recorded | undefined {
+			return calls[calls.length - 1];
+		},
 		async get(path: string, query?: Query) {
-			state.last = { path, query };
-			// biome-ignore lint/suspicious/noExplicitAny: test shim exposing the recorded call
-			(client as any).last = state.last;
+			calls.push({ method: "GET", path, query });
+			return { ok: true };
+		},
+		async post(path: string, body: unknown) {
+			calls.push({ method: "POST", path, body });
 			return { ok: true };
 		},
 	};
-	return client as unknown as UmamiClient & { last: { path: string; query?: Query } | undefined };
+	return client as unknown as UmamiClient & { calls: Recorded[]; last: Recorded | undefined };
 }
 
 function tool(name: string) {
@@ -68,7 +80,7 @@ describe("tools → endpoint mapping", () => {
 	it("list_websites hits /websites with no query", async () => {
 		const client = fakeClient();
 		await tool("list_websites").run(client, {});
-		expect(client.last).toEqual({ path: "/websites", query: undefined });
+		expect(client.last).toEqual({ method: "GET", path: "/websites", query: undefined });
 	});
 
 	it("website_stats passes an explicit range through as ms", async () => {
@@ -122,9 +134,115 @@ describe("tools → endpoint mapping", () => {
 		expect(client.last?.path).toBe("/websites/w1/events/series");
 	});
 
-	it("active_visitors hits /active with no query", async () => {
+	it("realtime hits /realtime/:id (not under /websites)", async () => {
 		const client = fakeClient();
-		await tool("active_visitors").run(client, { websiteId: "w1" });
-		expect(client.last).toEqual({ path: "/websites/w1/active", query: undefined });
+		await tool("realtime").run(client, { websiteId: "w1" });
+		expect(client.last).toMatchObject({ method: "GET", path: "/realtime/w1" });
+	});
+
+	it("data_range hits /daterange", async () => {
+		const client = fakeClient();
+		await tool("data_range").run(client, { websiteId: "w1" });
+		expect(client.last?.path).toBe("/websites/w1/daterange");
+	});
+
+	it("metrics expanded=true routes to /metrics/expanded", async () => {
+		const client = fakeClient();
+		await tool("metrics").run(client, { websiteId: "w1", type: "url", expanded: true });
+		expect(client.last?.path).toBe("/websites/w1/metrics/expanded");
+	});
+});
+
+describe("event-data exploration", () => {
+	it("mode=events hits /event-data/events with an optional event filter", async () => {
+		const client = fakeClient();
+		await tool("explore_event_data").run(client, { websiteId: "w1", event: "signup" });
+		expect(client.last?.path).toBe("/websites/w1/event-data/events");
+		expect(client.last?.query).toMatchObject({ event: "signup" });
+	});
+
+	it("mode=values requires event AND propertyName", async () => {
+		const client = fakeClient();
+		await expect(
+			tool("explore_event_data").run(client, { websiteId: "w1", mode: "values", event: "signup" }),
+		).rejects.toThrow(/propertyName is required/);
+	});
+
+	it("mode=values hits /event-data/values when both are present", async () => {
+		const client = fakeClient();
+		await tool("explore_event_data").run(client, {
+			websiteId: "w1",
+			mode: "values",
+			event: "signup",
+			propertyName: "plan",
+		});
+		expect(client.last?.path).toBe("/websites/w1/event-data/values");
+		expect(client.last?.query).toMatchObject({ event: "signup", propertyName: "plan" });
+	});
+});
+
+describe("sessions", () => {
+	it("list_sessions passes pagination + search", async () => {
+		const client = fakeClient();
+		await tool("list_sessions").run(client, { websiteId: "w1", search: "chrome", page: 2, pageSize: 50 });
+		expect(client.last?.path).toBe("/websites/w1/sessions");
+		expect(client.last?.query).toMatchObject({ search: "chrome", page: 2, pageSize: 50 });
+	});
+
+	it("session_detail fetches summary + activity + properties", async () => {
+		const client = fakeClient();
+		await tool("session_detail").run(client, { websiteId: "w1", sessionId: "s9" });
+		const paths = client.calls.map((c) => c.path);
+		expect(paths).toContain("/websites/w1/sessions/s9");
+		expect(paths).toContain("/websites/w1/sessions/s9/activity");
+		expect(paths).toContain("/websites/w1/sessions/s9/properties");
+	});
+});
+
+describe("reports (compute-reads via POST)", () => {
+	it("funnel_report POSTs steps and requires >= 2", async () => {
+		const client = fakeClient();
+		await expect(
+			tool("funnel_report").run(client, { websiteId: "w1", steps: [{ type: "path", value: "/" }] }),
+		).rejects.toThrow(/at least two steps/);
+
+		await tool("funnel_report").run(client, {
+			websiteId: "w1",
+			steps: [
+				{ type: "path", value: "/" },
+				{ type: "event", value: "signup" },
+			],
+			startDate: "2026-06-01",
+			endDate: "2026-06-30",
+		});
+		expect(client.last).toMatchObject({
+			method: "POST",
+			path: "/reports/funnel",
+			body: { type: "funnel", websiteId: "w1", startDate: "2026-06-01", endDate: "2026-06-30" },
+		});
+	});
+
+	it("retention_report requires a timezone and POSTs it", async () => {
+		const client = fakeClient();
+		await expect(tool("retention_report").run(client, { websiteId: "w1" })).rejects.toThrow(/timezone is required/);
+		await tool("retention_report").run(client, { websiteId: "w1", timezone: "America/New_York" });
+		expect(client.last).toMatchObject({
+			method: "POST",
+			path: "/reports/retention",
+			body: { type: "retention", timezone: "America/New_York" },
+		});
+	});
+
+	it("journey_report enforces 3–7 steps and POSTs startStep", async () => {
+		const client = fakeClient();
+		await expect(tool("journey_report").run(client, { websiteId: "w1", startStep: "/", steps: 9 })).rejects.toThrow(
+			/between 3 and 7/,
+		);
+		await tool("journey_report").run(client, { websiteId: "w1", startStep: "/", steps: 4 });
+		expect(client.last).toMatchObject({
+			method: "POST",
+			path: "/reports/journey",
+			body: { type: "journey", startStep: "/", steps: 4 },
+		});
 	});
 });

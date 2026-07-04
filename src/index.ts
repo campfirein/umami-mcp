@@ -19,7 +19,7 @@ async function main(): Promise<void> {
 	// configured — the message tells the operator exactly what to set.
 	const client = new UmamiClient(loadConfig());
 
-	const server = new Server({ name: "umami-mcp", version: "0.1.0" }, { capabilities: { tools: {} } });
+	const server = new Server({ name: "umami-mcp", version: "0.2.0" }, { capabilities: { tools: {} } });
 
 	server.setRequestHandler(ListToolsRequestSchema, async () => ({
 		tools: TOOLS.map((tool) => ({

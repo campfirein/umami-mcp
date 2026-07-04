@@ -66,17 +66,45 @@ Tools surface in Grove as `umami__list_websites`, `umami__website_stats`, etc.
 
 ## Tools
 
+Thirteen read tools covering essentially all of Umami's analytics reads —
+consolidated (one `metrics` tool spans ~10 dimensions; `explore_event_data`
+folds five endpoints behind a `mode`), never mirroring the REST API 1:1.
+
+**Discovery**
 | Tool | What it returns |
 | --- | --- |
 | `list_websites` | Websites (id, name, domain) these credentials can see. Start here. |
-| `website_stats` | Pageviews, visitors, visits, bounces, total time over a range. |
-| `pageviews_series` | Pageviews/sessions time series, bucketed by hour/day/month/year. |
-| `metrics` | Top values for one dimension (url, referrer, browser, country, event, …). |
-| `events_series` | Custom-event time series over a range. |
-| `active_visitors` | Visitors active right now. |
+| `data_range` | Earliest/latest timestamps with data — call before querying ranges. |
 
-Date-ranged tools accept ISO `startAt`/`endAt` (e.g. `2026-07-01`); omit them
-for the last 7 days.
+**Traffic & trends**
+| Tool | What it returns |
+| --- | --- |
+| `website_stats` | Pageviews, visitors, visits, bounces, total time (with prior period). |
+| `pageviews_series` | Pageviews/sessions time series, bucketed by hour/day/month/year. |
+| `realtime` | Live activity in the last ~30 min (active visitors, recent views/events). |
+
+**Breakdowns & events**
+| Tool | What it returns |
+| --- | --- |
+| `metrics` | Top values for one dimension (url, referrer, browser, country, event, …); `expanded=true` adds engagement. |
+| `events_series` | Custom-event time series over a range. |
+| `explore_event_data` | Drill into event properties/values (`mode`: events / properties / fields / stats / values). |
+
+**Sessions & journeys**
+| Tool | What it returns |
+| --- | --- |
+| `list_sessions` | Individual visitor sessions (paginated, searchable). |
+| `session_detail` | One session's summary + activity log + custom properties. |
+
+**Analyses** (compute-reads, POST — still read-only)
+| Tool | What it returns |
+| --- | --- |
+| `funnel_report` | Conversion funnel across ordered steps (paths/events). |
+| `retention_report` | Return-visitor retention over the range (needs a timezone). |
+| `journey_report` | Common navigation paths between a start and (optional) end step. |
+
+Range tools accept ISO `startAt`/`endAt`; report tools accept ISO
+`startDate`/`endDate` (e.g. `2026-07-01`). Omit them for the last 7 days.
 
 ## Develop
 
