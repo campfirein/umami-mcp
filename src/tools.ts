@@ -136,7 +136,7 @@ export const TOOLS: readonly UmamiTool[] = [
 		run: async (client, args) => {
 			const { startAt, endAt } = resolveRange(args);
 			const query: Query = { startAt, endAt, unit: asString(args.unit) ?? "day", timezone: asString(args.timezone) };
-			return client.get(`/websites/${websiteId(args)}/events`, query);
+			return client.get(`/websites/${websiteId(args)}/events/series`, query);
 		},
 	},
 	{

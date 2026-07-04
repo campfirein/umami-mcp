@@ -116,6 +116,12 @@ describe("tools → endpoint mapping", () => {
 		expect(client.last?.query).toMatchObject({ unit: "day" });
 	});
 
+	it("events_series hits /events/series", async () => {
+		const client = fakeClient();
+		await tool("events_series").run(client, { websiteId: "w1", startAt: "2026-07-01", endAt: "2026-07-02" });
+		expect(client.last?.path).toBe("/websites/w1/events/series");
+	});
+
 	it("active_visitors hits /active with no query", async () => {
 		const client = fakeClient();
 		await tool("active_visitors").run(client, { websiteId: "w1" });
