@@ -1,6 +1,6 @@
 {
   "name": "@byterover/umami-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A minimal, read-only Model Context Protocol server for Umami analytics (Cloud or self-hosted).",
   "license": "Elastic-2.0",
   "type": "module",

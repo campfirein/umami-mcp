@@ -77,10 +77,36 @@ describe("loadConfig", () => {
 });
 
 describe("tools → endpoint mapping", () => {
-	it("list_websites hits /websites with no query", async () => {
-		const client = fakeClient();
-		await tool("list_websites").run(client, {});
-		expect(client.last).toEqual({ method: "GET", path: "/websites", query: undefined });
+	it("list_websites aggregates personal + team websites and dedupes by id", async () => {
+		// Path-aware fake: personal is empty (the team-only setup), the site lives
+		// under the team — and also appears personally to prove de-duplication.
+		const bodies: Record<string, unknown> = {
+			"/websites": { data: [{ id: "shared", name: "Shared", domain: "s.com" }], count: 1 },
+			"/teams": { data: [{ id: "t1", name: "byterover" }], count: 1 },
+			"/teams/t1/websites": {
+				data: [
+					{ id: "shared", name: "Shared", domain: "s.com" },
+					{ id: "w1", name: "Site", domain: "x.com" },
+				],
+				count: 2,
+			},
+		};
+		const client = {
+			async get(path: string) {
+				return bodies[path] ?? { data: [] };
+			},
+		} as unknown as UmamiClient;
+
+		const result = (await tool("list_websites").run(client, {})) as {
+			websites: Array<Record<string, unknown>>;
+			count: number;
+		};
+		expect(result.count).toBe(2);
+		const ids = result.websites.map((w) => w.id).sort();
+		expect(ids).toEqual(["shared", "w1"]);
+		// The team-only site is tagged with its team; the personally-owned one is not.
+		expect(result.websites.find((w) => w.id === "w1")?.team).toMatchObject({ id: "t1", name: "byterover" });
+		expect(result.websites.find((w) => w.id === "shared")?.team).toBeUndefined();
 	});
 
 	it("website_stats passes an explicit range through as ms", async () => {
@@ -104,11 +130,11 @@ describe("tools → endpoint mapping", () => {
 		expect(endAt - startAt).toBe(7 * 86_400_000);
 	});
 
-	it("metrics requires a type and defaults limit to 20", async () => {
+	it("metrics defaults limit to 20 and aliases legacy url→path", async () => {
 		const client = fakeClient();
 		await tool("metrics").run(client, { websiteId: "w1", type: "url", startAt: "2026-07-01", endAt: "2026-07-02" });
 		expect(client.last?.path).toBe("/websites/w1/metrics");
-		expect(client.last?.query).toMatchObject({ type: "url", limit: 20 });
+		expect(client.last?.query).toMatchObject({ type: "path", limit: 20 });
 	});
 
 	it("metrics throws without a type", async () => {

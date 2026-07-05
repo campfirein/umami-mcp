@@ -76,6 +76,15 @@ function asString(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** Umami list responses come back as a bare array OR `{ data: [...] }` — normalize. */
+function itemsOf(response: unknown): Array<Record<string, unknown>> {
+	if (Array.isArray(response)) return response as Array<Record<string, unknown>>;
+	if (response !== null && typeof response === "object" && Array.isArray((response as { data?: unknown }).data)) {
+		return (response as { data: Array<Record<string, unknown>> }).data;
+	}
+	return [];
+}
+
 /** Reusable schema fragments. */
 const RANGE_PROPS = {
 	startAt: { type: "string", description: "Range start, ISO date. Optional; defaults to 7 days ago." },
@@ -95,9 +104,37 @@ export const TOOLS: readonly UmamiTool[] = [
 	// ── Discovery ────────────────────────────────────────────────────────────
 	{
 		name: "list_websites",
-		description: "List the websites (id, name, domain) visible to these credentials. Start here to get a websiteId.",
+		description:
+			"List every website these credentials can reach (id, name, domain) — both personally-owned sites AND " +
+			"sites shared through a team. Start here to get a websiteId. Team sites carry a `team` tag.",
 		inputSchema: { type: "object", properties: {}, additionalProperties: false },
-		run: async (client) => client.get("/websites"),
+		run: async (client) => {
+			// Umami's GET /websites returns ONLY personally-owned sites. A very common
+			// setup (a service account added to a team that owns the site) surfaces
+			// nothing there — the site lives under GET /teams/:id/websites. So we
+			// aggregate both and dedupe by id, tagging team-sourced rows.
+			const byId = new Map<string, Record<string, unknown>>();
+			const add = (site: Record<string, unknown>, team?: { id: string; name: unknown }) => {
+				const id = site.id;
+				if (typeof id !== "string" || byId.has(id)) return;
+				byId.set(id, team !== undefined ? { ...site, team } : site);
+			};
+
+			for (const site of itemsOf(await client.get("/websites"))) add(site);
+
+			// Team enumeration is best-effort: on an instance where it's unavailable,
+			// personally-owned sites still list.
+			const teams = await client.get("/teams").catch(() => null);
+			for (const team of itemsOf(teams)) {
+				const id = team.id;
+				if (typeof id !== "string") continue;
+				const teamSites = await client.get(`/teams/${id}/websites`).catch(() => null);
+				for (const site of itemsOf(teamSites)) add(site, { id, name: team.name });
+			}
+
+			const websites = [...byId.values()];
+			return { websites, count: websites.length };
+		},
 	},
 	{
 		name: "data_range",
@@ -166,7 +203,7 @@ export const TOOLS: readonly UmamiTool[] = [
 	{
 		name: "metrics",
 		description:
-			"Top values for one dimension of a website's traffic over a date range — e.g. type=url for top pages, " +
+			"Top values for one dimension of a website's traffic over a date range — e.g. type=path for top pages, " +
 			"type=referrer for top referrers, type=browser / os / device / country / event. Set expanded=true for " +
 			"engagement detail (visitors, visits, bounce, duration per row).",
 		inputSchema: {
@@ -176,8 +213,23 @@ export const TOOLS: readonly UmamiTool[] = [
 				...RANGE_PROPS,
 				type: {
 					type: "string",
-					enum: ["url", "referrer", "title", "query", "browser", "os", "device", "country", "region", "city", "event"],
-					description: "Which dimension to rank.",
+					enum: [
+						"path",
+						"referrer",
+						"title",
+						"query",
+						"browser",
+						"os",
+						"device",
+						"screen",
+						"country",
+						"region",
+						"city",
+						"language",
+						"event",
+						"tag",
+					],
+					description: "Which dimension to rank (path = top pages).",
 				},
 				limit: { type: "number", description: "Max rows (default 20)." },
 				expanded: { type: "boolean", description: "Return engagement-rich rows (default false)." },
@@ -186,8 +238,11 @@ export const TOOLS: readonly UmamiTool[] = [
 			additionalProperties: false,
 		},
 		run: async (client, args) => {
-			const type = asString(args.type);
-			if (type === undefined) throw new Error("type is required (e.g. url, referrer, browser, country, event)");
+			const raw = asString(args.type);
+			if (raw === undefined) throw new Error("type is required (e.g. path, referrer, browser, country, event)");
+			// Older Umami named the top-pages dimension `url`; current versions use
+			// `path` (and reject `url` with a 400). Accept the legacy name either way.
+			const type = raw === "url" ? "path" : raw;
 			const { startAt, endAt } = resolveRange(args);
 			const query: Query = { startAt, endAt, type, limit: typeof args.limit === "number" ? args.limit : 20 };
 			const path = args.expanded === true ? "metrics/expanded" : "metrics";
