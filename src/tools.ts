@@ -183,7 +183,12 @@ export const TOOLS: readonly UmamiTool[] = [
 		},
 		run: async (client, args) => {
 			const { startAt, endAt } = resolveRange(args);
-			const query: Query = { startAt, endAt, unit: asString(args.unit) ?? "day", timezone: asString(args.timezone) };
+			const query: Query = {
+				startAt,
+				endAt,
+				unit: asString(args.unit) ?? "day",
+				timezone: asString(args.timezone) ?? "UTC",
+			};
 			return client.get(`/websites/${websiteId(args)}/pageviews`, query);
 		},
 	},
@@ -267,7 +272,12 @@ export const TOOLS: readonly UmamiTool[] = [
 		},
 		run: async (client, args) => {
 			const { startAt, endAt } = resolveRange(args);
-			const query: Query = { startAt, endAt, unit: asString(args.unit) ?? "day", timezone: asString(args.timezone) };
+			const query: Query = {
+				startAt,
+				endAt,
+				unit: asString(args.unit) ?? "day",
+				timezone: asString(args.timezone) ?? "UTC",
+			};
 			return client.get(`/websites/${websiteId(args)}/events/series`, query);
 		},
 	},
@@ -411,16 +421,24 @@ export const TOOLS: readonly UmamiTool[] = [
 			additionalProperties: false,
 		},
 		run: async (client, args) => {
-			const steps = Array.isArray(args.steps) ? args.steps : [];
-			if (steps.length < 2) throw new Error("funnel needs at least two steps (each { type: path|event, value })");
+			const rawSteps = Array.isArray(args.steps) ? args.steps : [];
+			if (rawSteps.length < 2) throw new Error("funnel needs at least two steps (each { type: path|event, value })");
+			// Umami step types are path|event; tolerate the legacy `url` alias.
+			const steps = rawSteps.map((step) => {
+				const s = step as { type?: unknown; value?: unknown };
+				return { type: s.type === "url" ? "path" : s.type, value: s.value };
+			});
 			const { startDate, endDate } = resolveDateStrings(args);
+			// `window` (days allowed between steps to count as a conversion) is
+			// REQUIRED by Umami. Default it to the span of the range so any ordered
+			// completion within the window counts.
+			const spanDays = Math.max(1, Math.round((Date.parse(endDate) - Date.parse(startDate)) / DAY_MS));
+			const window = typeof args.window === "number" ? args.window : spanDays;
 			return client.post("/reports/funnel", {
 				websiteId: websiteId(args),
 				type: "funnel",
-				startDate,
-				endDate,
-				steps,
-				...(typeof args.window === "number" ? { window: args.window } : {}),
+				filters: {},
+				parameters: { startDate, endDate, steps, window },
 			});
 		},
 	},
@@ -445,9 +463,8 @@ export const TOOLS: readonly UmamiTool[] = [
 			return client.post("/reports/retention", {
 				websiteId: websiteId(args),
 				type: "retention",
-				startDate,
-				endDate,
-				timezone,
+				filters: {},
+				parameters: { startDate, endDate, timezone },
 			});
 		},
 	},
@@ -476,11 +493,14 @@ export const TOOLS: readonly UmamiTool[] = [
 			return client.post("/reports/journey", {
 				websiteId: websiteId(args),
 				type: "journey",
-				startDate,
-				endDate,
-				steps,
-				startStep,
-				...(asString(args.endStep) !== undefined ? { endStep: args.endStep } : {}),
+				filters: {},
+				parameters: {
+					startDate,
+					endDate,
+					steps,
+					startStep,
+					...(asString(args.endStep) !== undefined ? { endStep: args.endStep } : {}),
+				},
 			});
 		},
 	},

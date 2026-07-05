@@ -244,7 +244,12 @@ describe("reports (compute-reads via POST)", () => {
 		expect(client.last).toMatchObject({
 			method: "POST",
 			path: "/reports/funnel",
-			body: { type: "funnel", websiteId: "w1", startDate: "2026-06-01", endDate: "2026-06-30" },
+			body: {
+				type: "funnel",
+				websiteId: "w1",
+				filters: {},
+				parameters: { startDate: "2026-06-01", endDate: "2026-06-30" },
+			},
 		});
 	});
 
@@ -255,7 +260,7 @@ describe("reports (compute-reads via POST)", () => {
 		expect(client.last).toMatchObject({
 			method: "POST",
 			path: "/reports/retention",
-			body: { type: "retention", timezone: "America/New_York" },
+			body: { type: "retention", filters: {}, parameters: { timezone: "America/New_York" } },
 		});
 	});
 
@@ -268,7 +273,7 @@ describe("reports (compute-reads via POST)", () => {
 		expect(client.last).toMatchObject({
 			method: "POST",
 			path: "/reports/journey",
-			body: { type: "journey", startStep: "/", steps: 4 },
+			body: { type: "journey", filters: {}, parameters: { startStep: "/", steps: 4 } },
 		});
 	});
 });
